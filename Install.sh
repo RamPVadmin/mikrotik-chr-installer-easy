@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # ============================================================================
-#                 MikroTik No-Console Installer v10
+#                 MikroTik No-Console Installer v11
 #                          by Ramin TR
 # ============================================================================
 # Goal:
@@ -140,7 +140,7 @@ fi
 clear 2>/dev/null || true
 cat <<EOF
 ============================================================================
-                  MikroTik No-Console Installer v10
+                  MikroTik No-Console Installer v11
                            by Ramin TR
 ============================================================================
 Detected VPS
@@ -165,37 +165,23 @@ else
   echo -e "${G}Reachability policy: Ubuntu/public IP will NOT be replaced.${N}"
   echo "CHR will run behind QEMU user-mode NAT with forwarded management ports."
   echo
-  echo "------------------------------------------------------------"
-  echo "IMPORTANT NETWORK NOTICE / راهنمای مهم"
-  echo
-  echo "EN:"
-  echo "Direct MikroTik/CHR installation on this VPS may require VNC/Console"
-  echo "after reboot to restore or configure the network."
-  echo "To keep the current public IP/Ping and avoid Console access,"
-  echo "use options 5-8 (No-Console VM / Docker-QEMU)."
-  echo
-  echo "FA:"
-  echo "این VPS در صورت نصب مستقیم MikroTik/CHR ممکن است بعد از نصب برای تنظیم شبکه"
-  echo "به VNC/Console نیاز داشته باشد."
-  echo "برای حفظ IP/Ping فعلی و عدم نیاز به Console،"
-  echo "از گزینه‌های 5 تا 8 (No-Console VM / Docker-QEMU) استفاده کنید."
-  echo "------------------------------------------------------------"
+  echo "Network: $NETMODE | Direct install may lose IP -> No-Console VM recommended to preserve Ping."
 fi
 echo
 
 echo "Choose installation:"
 echo
-echo "  DIRECT / AUTO ENGINE"
-echo "  1) RouterOS $ROS7_STABLE   [ROS7 STABLE]    -> AUTO engine: $ENGINE"
-echo "  2) RouterOS $ROS7_LONG    [ROS7 LONG-TERM] -> AUTO engine: $ENGINE"
-echo "  3) RouterOS $ROS6_STABLE   [ROS6 STABLE]    -> AUTO engine: $ENGINE"
-echo "  4) RouterOS $ROS6_LONG   [ROS6 LONG-TERM] -> AUTO engine: $ENGINE"
+echo "  AUTO RECOMMENDED"
+echo "  1) RouterOS $ROS7_STABLE   [ROS7 STABLE]    -> AUTO selects safest engine"
+echo "  2) RouterOS $ROS7_LONG    [ROS7 LONG-TERM] -> AUTO selects safest engine"
+echo "  3) RouterOS $ROS6_STABLE   [ROS6 STABLE]    -> AUTO selects safest engine"
+echo "  4) RouterOS $ROS6_LONG   [ROS6 LONG-TERM] -> AUTO selects safest engine"
 echo
-echo "  NO-CONSOLE VM (KEEP UBUNTU + KEEP PUBLIC IP)"
-echo "  5) RouterOS $ROS7_STABLE   [ROS7 STABLE]    -> VM fallback"
-echo "  6) RouterOS $ROS7_LONG    [ROS7 LONG-TERM] -> VM fallback"
-echo "  7) RouterOS $ROS6_STABLE   [ROS6 STABLE]    -> VM fallback"
-echo "  8) RouterOS $ROS6_LONG   [ROS6 LONG-TERM] -> VM fallback"
+echo "  FORCE NO-CONSOLE VM (KEEP UBUNTU + KEEP PUBLIC IP)"
+echo "  5) RouterOS $ROS7_STABLE   [ROS7 STABLE]    -> Force VM mode"
+echo "  6) RouterOS $ROS7_LONG    [ROS7 LONG-TERM] -> Force VM mode"
+echo "  7) RouterOS $ROS6_STABLE   [ROS6 STABLE]    -> Force VM mode"
+echo "  8) RouterOS $ROS6_LONG   [ROS6 LONG-TERM] -> Force VM mode"
 echo
 echo "  0) Cancel"
 echo
