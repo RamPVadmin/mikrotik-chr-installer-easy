@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # ============================================================================
-#                 MikroTik No-Console Installer v11
+#                 MikroTik No-Console Installer v13
 #                          by Ramin TR
 # ============================================================================
 # Goal:
@@ -140,7 +140,7 @@ fi
 clear 2>/dev/null || true
 cat <<EOF
 ============================================================================
-                  MikroTik No-Console Installer v11
+                  MikroTik No-Console Installer v13
                            by Ramin TR
 ============================================================================
 Detected VPS
@@ -171,17 +171,25 @@ echo
 
 echo "Choose installation:"
 echo
-echo "  AUTO RECOMMENDED"
-echo "  1) RouterOS $ROS7_STABLE   [ROS7 STABLE]    -> AUTO selects safest engine"
-echo "  2) RouterOS $ROS7_LONG    [ROS7 LONG-TERM] -> AUTO selects safest engine"
-echo "  3) RouterOS $ROS6_STABLE   [ROS6 STABLE]    -> AUTO selects safest engine"
-echo "  4) RouterOS $ROS6_LONG   [ROS6 LONG-TERM] -> AUTO selects safest engine"
+if [[ "$ENGINE" == "DIRECT" ]]; then
+  echo -e "${G}RECOMMENDATION: DIRECT CHR is preferred for this VPS.${N}"
+  echo "Reason: $ENGINE_REASON"
+else
+  echo -e "${Y}RECOMMENDATION: NO-CONSOLE VM is preferred for this VPS.${N}"
+  echo "Reason: $ENGINE_REASON"
+fi
 echo
-echo "  FORCE NO-CONSOLE VM (KEEP UBUNTU + KEEP PUBLIC IP)"
-echo "  5) RouterOS $ROS7_STABLE   [ROS7 STABLE]    -> Force VM mode"
-echo "  6) RouterOS $ROS7_LONG    [ROS7 LONG-TERM] -> Force VM mode"
-echo "  7) RouterOS $ROS6_STABLE   [ROS6 STABLE]    -> Force VM mode"
-echo "  8) RouterOS $ROS6_LONG   [ROS6 LONG-TERM] -> Force VM mode"
+echo "  DIRECT CHR (REMOVE UBUNTU / MIKROTIK ON VPS DISK)"
+echo "  1) RouterOS $ROS7_STABLE   [ROS7 STABLE]    -> DIRECT INSTALL"
+echo "  2) RouterOS $ROS7_LONG    [ROS7 LONG-TERM] -> DIRECT INSTALL"
+echo "  3) RouterOS $ROS6_STABLE   [ROS6 STABLE]    -> DIRECT INSTALL"
+echo "  4) RouterOS $ROS6_LONG   [ROS6 LONG-TERM] -> DIRECT INSTALL"
+echo
+echo "  NO-CONSOLE VM (KEEP UBUNTU + KEEP PUBLIC IP)"
+echo "  5) RouterOS $ROS7_STABLE   [ROS7 STABLE]    -> DOCKER/QEMU VM"
+echo "  6) RouterOS $ROS7_LONG    [ROS7 LONG-TERM] -> DOCKER/QEMU VM"
+echo "  7) RouterOS $ROS6_STABLE   [ROS6 STABLE]    -> DOCKER/QEMU VM"
+echo "  8) RouterOS $ROS6_LONG   [ROS6 LONG-TERM] -> DOCKER/QEMU VM"
 echo
 echo "  0) Cancel"
 echo
@@ -193,10 +201,10 @@ fi
 
 read -rp "Select [1-8/0]: " CHOICE
 case "$CHOICE" in
-  1) VERSION="$ROS7_STABLE"; CHANNEL="ROS7 STABLE" ;;
-  2) VERSION="$ROS7_LONG"; CHANNEL="ROS7 LONG-TERM" ;;
-  3) VERSION="$ROS6_STABLE"; CHANNEL="ROS6 STABLE" ;;
-  4) VERSION="$ROS6_LONG"; CHANNEL="ROS6 LONG-TERM" ;;
+  1) VERSION="$ROS7_STABLE"; CHANNEL="ROS7 STABLE"; ENGINE="DIRECT" ;;
+  2) VERSION="$ROS7_LONG"; CHANNEL="ROS7 LONG-TERM"; ENGINE="DIRECT" ;;
+  3) VERSION="$ROS6_STABLE"; CHANNEL="ROS6 STABLE"; ENGINE="DIRECT" ;;
+  4) VERSION="$ROS6_LONG"; CHANNEL="ROS6 LONG-TERM"; ENGINE="DIRECT" ;;
   5) VERSION="$ROS7_STABLE"; CHANNEL="ROS7 STABLE"; ENGINE=$([[ "$HAS_KVM" == YES ]] && echo DOCKER_KVM || echo DOCKER_TCG) ;;
   6) VERSION="$ROS7_LONG"; CHANNEL="ROS7 LONG-TERM"; ENGINE=$([[ "$HAS_KVM" == YES ]] && echo DOCKER_KVM || echo DOCKER_TCG) ;;
   7) VERSION="$ROS6_STABLE"; CHANNEL="ROS6 STABLE"; ENGINE=$([[ "$HAS_KVM" == YES ]] && echo DOCKER_KVM || echo DOCKER_TCG) ;;
