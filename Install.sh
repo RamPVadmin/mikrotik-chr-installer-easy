@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # ============================================================================
-#                 MikroTik No-Console Installer v9
+#                 MikroTik No-Console Installer v10
 #                          by Ramin TR
 # ============================================================================
 # Goal:
@@ -140,7 +140,7 @@ fi
 clear 2>/dev/null || true
 cat <<EOF
 ============================================================================
-                  MikroTik No-Console Installer v9
+                  MikroTik No-Console Installer v10
                            by Ramin TR
 ============================================================================
 Detected VPS
@@ -164,15 +164,39 @@ if [[ "$ENGINE" == "DIRECT" ]]; then
 else
   echo -e "${G}Reachability policy: Ubuntu/public IP will NOT be replaced.${N}"
   echo "CHR will run behind QEMU user-mode NAT with forwarded management ports."
+  echo
+  echo "------------------------------------------------------------"
+  echo "IMPORTANT NETWORK NOTICE / راهنمای مهم"
+  echo
+  echo "EN:"
+  echo "Direct MikroTik/CHR installation on this VPS may require VNC/Console"
+  echo "after reboot to restore or configure the network."
+  echo "To keep the current public IP/Ping and avoid Console access,"
+  echo "use options 5-8 (No-Console VM / Docker-QEMU)."
+  echo
+  echo "FA:"
+  echo "این VPS در صورت نصب مستقیم MikroTik/CHR ممکن است بعد از نصب برای تنظیم شبکه"
+  echo "به VNC/Console نیاز داشته باشد."
+  echo "برای حفظ IP/Ping فعلی و عدم نیاز به Console،"
+  echo "از گزینه‌های 5 تا 8 (No-Console VM / Docker-QEMU) استفاده کنید."
+  echo "------------------------------------------------------------"
 fi
 echo
 
-echo "Choose official CHR x86_64 release:"
+echo "Choose installation:"
 echo
-echo "  1) RouterOS $ROS7_STABLE   [ROS7 STABLE]"
-echo "  2) RouterOS $ROS7_LONG    [ROS7 LONG-TERM]"
-echo "  3) RouterOS $ROS6_STABLE   [ROS6 STABLE]"
-echo "  4) RouterOS $ROS6_LONG   [ROS6 LONG-TERM]"
+echo "  DIRECT / AUTO ENGINE"
+echo "  1) RouterOS $ROS7_STABLE   [ROS7 STABLE]    -> AUTO engine: $ENGINE"
+echo "  2) RouterOS $ROS7_LONG    [ROS7 LONG-TERM] -> AUTO engine: $ENGINE"
+echo "  3) RouterOS $ROS6_STABLE   [ROS6 STABLE]    -> AUTO engine: $ENGINE"
+echo "  4) RouterOS $ROS6_LONG   [ROS6 LONG-TERM] -> AUTO engine: $ENGINE"
+echo
+echo "  NO-CONSOLE VM (KEEP UBUNTU + KEEP PUBLIC IP)"
+echo "  5) RouterOS $ROS7_STABLE   [ROS7 STABLE]    -> VM fallback"
+echo "  6) RouterOS $ROS7_LONG    [ROS7 LONG-TERM] -> VM fallback"
+echo "  7) RouterOS $ROS6_STABLE   [ROS6 STABLE]    -> VM fallback"
+echo "  8) RouterOS $ROS6_LONG   [ROS6 LONG-TERM] -> VM fallback"
+echo
 echo "  0) Cancel"
 echo
 
@@ -181,12 +205,16 @@ if [[ "${1:-}" == "--check" ]]; then
   exit 0
 fi
 
-read -rp "Select [1-4/0]: " CHOICE
+read -rp "Select [1-8/0]: " CHOICE
 case "$CHOICE" in
   1) VERSION="$ROS7_STABLE"; CHANNEL="ROS7 STABLE" ;;
   2) VERSION="$ROS7_LONG"; CHANNEL="ROS7 LONG-TERM" ;;
   3) VERSION="$ROS6_STABLE"; CHANNEL="ROS6 STABLE" ;;
   4) VERSION="$ROS6_LONG"; CHANNEL="ROS6 LONG-TERM" ;;
+  5) VERSION="$ROS7_STABLE"; CHANNEL="ROS7 STABLE"; ENGINE=$([[ "$HAS_KVM" == YES ]] && echo DOCKER_KVM || echo DOCKER_TCG) ;;
+  6) VERSION="$ROS7_LONG"; CHANNEL="ROS7 LONG-TERM"; ENGINE=$([[ "$HAS_KVM" == YES ]] && echo DOCKER_KVM || echo DOCKER_TCG) ;;
+  7) VERSION="$ROS6_STABLE"; CHANNEL="ROS6 STABLE"; ENGINE=$([[ "$HAS_KVM" == YES ]] && echo DOCKER_KVM || echo DOCKER_TCG) ;;
+  8) VERSION="$ROS6_LONG"; CHANNEL="ROS6 LONG-TERM"; ENGINE=$([[ "$HAS_KVM" == YES ]] && echo DOCKER_KVM || echo DOCKER_TCG) ;;
   0) echo "Cancelled."; exit 0 ;;
   *) die "Invalid selection." ;;
 esac
