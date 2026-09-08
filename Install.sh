@@ -1,108 +1,116 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 C="\033[1;36m"; G="\033[1;32m"; Y="\033[1;33m"; R="\033[1;31m"; N="\033[0m"
-die(){ echo -e "${R}[خطا]${N} $*" >&2; exit 1; }
-[[ $EUID -eq 0 ]] || die "با root اجرا کنید: sudo bash $0"
-need(){ command -v "$1" >/dev/null 2>&1; }
-for x in lsblk findmnt awk grep df ip dd sha256sum sync; do need "$x" || die "$x نصب نیست"; done
+die(){ echo -e "${R}[ERROR]${N} $*" >&2; exit 1; }
+warn(){ echo -e "${Y}[WARN]${N} $*" >&2; }
+info(){ echo -e "${C}[INFO]${N} $*"; }
+ok(){ echo -e "${G}[OK]${N} $*"; }
+have(){ command -v "$1" >/dev/null 2>&1; }
+[[ $EUID -eq 0 ]] || die "Run as root."
 
-rootdev="$(findmnt -n -o SOURCE /)"
-pk="$(lsblk -no PKNAME "$rootdev" 2>/dev/null|head -1)"
-disk="${pk:+/dev/$pk}"
-[[ -b "$disk" ]] || die "دیسک سیستم خودکار پیدا نشد."
-ip4="$(ip -4 -o addr show scope global | awk 'NR==1{print $4}')"
-gw="$(ip -4 route show default | awk 'NR==1{print $3}')"
-nic="$(ip -4 route show default | awk 'NR==1{print $5}')"
-mac="$(cat /sys/class/net/${nic}/address 2>/dev/null || true)"
-size="$(lsblk -ndo SIZE "$disk")"
-
+refresh(){
+ ROOT_SRC="$(findmnt -n -o SOURCE / 2>/dev/null || true)"
+ IPV4="$(ip -4 -o addr show scope global 2>/dev/null|awk 'NR==1{print $4}')"
+ GW="$(ip -4 route show default 2>/dev/null|awk 'NR==1{print $3}')"
+ NIC="$(ip -4 route show default 2>/dev/null|awk 'NR==1{print $5}')"
+ MAC=""; [[ -n "$NIC" && -r /sys/class/net/$NIC/address ]] && MAC="$(cat /sys/class/net/$NIC/address)"
+ ROOT_DISK=""
+ local s="$ROOT_SRC" p="" i=0
+ [[ "$s" == /dev/* ]] && s="$(readlink -f "$s" 2>/dev/null || echo "$s")"
+ while [[ "$s" == /dev/* && $i -lt 8 ]]; do
+   [[ "$(lsblk -ndo TYPE "$s" 2>/dev/null|head -1)" == disk ]] && { ROOT_DISK="$s"; break; }
+   p="$(lsblk -ndo PKNAME "$s" 2>/dev/null|head -1 || true)"
+   [[ -z "$p" ]] && break
+   s="/dev/$p"; i=$((i+1))
+ done
+ mapfile -t DS < <(lsblk -dnpo NAME,TYPE|awk '$2=="disk"{print $1}')
+ [[ -z "$ROOT_DISK" && ${#DS[@]} -eq 1 ]] && ROOT_DISK="${DS[0]}"
+}
 banner(){
-clear
-echo -e "${C}====================================================${N}"
-echo -e "${C}       MikroTik CHR One-Command Installer FA${N}"
-echo -e "${C}====================================================${N}"
-echo " Linux IP : ${ip4:-نامشخص}"
-echo " Gateway  : ${gw:-نامشخص}"
-echo " NIC      : ${nic:-نامشخص}   MAC: ${mac:-نامشخص}"
-echo " Disk     : $disk ($size)"
-echo
+ refresh; clear 2>/dev/null||true
+ echo "============================================================"
+ echo "           MikroTik CHR Easy Installer v3"
+ echo "============================================================"
+ echo "IPv4    : ${IPV4:-unknown}"
+ echo "Gateway : ${GW:-unknown}"
+ echo "NIC/MAC : ${NIC:-unknown} / ${MAC:-unknown}"
+ echo "Root FS : ${ROOT_SRC:-unknown}"
+ echo "Disk    : ${ROOT_DISK:-not detected}"
+ echo "============================================================"; echo
 }
 check(){
-banner
-lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS,MODEL "$disk"
-echo; ip -br addr; echo; ip route
-if need lspci; then echo; lspci -nn | grep -Ei 'ethernet|network|virtio|storage|sata|scsi' || true; fi
-echo
-read -rp "Enter برای برگشت..." _
+ banner
+ echo "READ-ONLY CHECK: no install, no package changes, no disk writes, no reboot."
+ echo; lsblk -o NAME,PKNAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS,MODEL
+ echo; ip -br -4 addr || true; echo; ip -4 route || true
+ if have lspci; then echo; lspci -nn|grep -Ei 'ethernet|network|virtio|storage|sata|scsi|nvme'||true; fi
+ echo; ok "Nothing was changed."; read -rp "Press Enter..." _
+}
+choose_disk(){
+ mapfile -t D < <(lsblk -dnpo NAME,SIZE,TYPE|awk '$3=="disk"{print $1" "$2}')
+ ((${#D[@]})) || die "No whole disks found."
+ echo "Whole disks:"
+ for i in "${!D[@]}"; do echo "  $((i+1))) ${D[$i]}"; done
+ read -rp "Disk number (0=cancel): " n
+ [[ "$n" =~ ^[0-9]+$ ]] && ((n>0 && n<=${#D[@]})) || return 1
+ TARGET="$(awk '{print $1}' <<<"${D[$((n-1))]}")"
+}
+tools(){
+ local m=(); have curl||m+=(curl); have unzip||m+=(unzip)
+ if ((${#m[@]})); then
+   have apt-get||die "Missing ${m[*]}; apt-get unavailable."
+   info "Installing required download tools only now..."
+   apt-get update; DEBIAN_FRONTEND=noninteractive apt-get install -y "${m[@]}"
+ fi
 }
 install(){
-local ver="$1"
-banner
-echo -e "${Y}نسخه انتخابی: RouterOS CHR $ver${N}"
-echo
-echo "نکته شبکه:"
-echo "  • نصب Clean است؛ کانفیگ Linux به RouterOS کپی نمی‌شود."
-echo "  • اگر VPS از DHCP/MAC binding استفاده کند، معمولاً همان IP برمی‌گردد."
-echo "  • اگر Provider فقط Static IP بدهد، بعد از بوت باید IP/Gateway را از Console تنظیم کنید."
-echo
-echo -e "${R}هشدار: کل $disk پاک می‌شود.${N}"
-read -rp "برای ادامه INSTALL را تایپ کنید: " ans
-[[ "$ans" == "INSTALL" ]] || { echo "لغو شد."; sleep 1; return; }
-
-if ! need curl; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y curl unzip; fi
-if ! need unzip; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y unzip; fi
-
-local ram=/dev/shm/chr-install
-mkdir -p "$ram"
-local zip="$ram/chr-$ver.img.zip" img="$ram/chr-$ver.img"
-local url="https://download.mikrotik.com/routeros/$ver/chr-$ver.img.zip"
-[[ "$(df -Pk /dev/shm|awk 'NR==2{print $4}')" -gt 524288 ]] || die "/dev/shm حداقل 512MB فضای آزاد لازم دارد."
-
-echo "دانلود رسمی MikroTik..."
-rm -f "$zip" "$img"
-curl -fL --retry 3 --connect-timeout 15 "$url" -o "$zip"
-unzip -t "$zip" >/dev/null || die "ZIP خراب است."
-unzip -jo "$zip" "chr-$ver.img" -d "$ram" >/dev/null
-[[ -s "$img" ]] || die "IMG پیدا نشد."
-echo "SHA256: $(sha256sum "$img"|awk '{print $1}')"
-echo
-echo "IP فعلی را برای یادداشت نگه دارید:"
-echo "IP=$ip4  GW=$gw  NIC=$nic  MAC=$mac"
-echo
-read -rp "تایید نهایی؛ ERASE را تایپ کنید: " ans2
-[[ "$ans2" == "ERASE" ]] || { echo "لغو شد."; sleep 1; return; }
-
-swapoff -a 2>/dev/null || true
-sync
-echo "نوشتن CHR روی $disk ..."
-dd if="$img" of="$disk" bs=4M conv=fsync status=progress
-echo
-echo -e "${G}نصب کامل شد. سیستم اکنون Reboot می‌شود.${N}"
-echo "ورود اولیه CHR: user=admin ، password خالی؛ بلافاصله Password قوی تعیین کنید."
-sleep 3
-if [[ -w /proc/sysrq-trigger ]]; then echo b > /proc/sysrq-trigger; fi
-reboot -f
+ local v="$1"; banner
+ echo "Selected CHR: $v"; echo
+ warn "Installation DESTROYS the selected disk."
+ choose_disk || { echo "Cancelled."; sleep 1; return; }
+ echo; echo "Target: $TARGET"
+ echo "Current network: ${IPV4:-unknown}, gateway ${GW:-unknown}, ${NIC:-unknown}, MAC ${MAC:-unknown}"
+ echo
+ echo "Network note: Linux IP settings are not blindly copied to RouterOS."
+ echo "DHCP/MAC-bound VPS networks normally reacquire their address."
+ echo "Static-only providers may require console configuration after first boot."
+ echo
+ read -rp "Type INSTALL to continue: " a
+ [[ "$a" == INSTALL ]] || { echo "Cancelled."; return; }
+ tools
+ local r=/dev/shm/chr-installer z="$r/chr-$v.img.zip" img="$r/chr-$v.img"
+ local url="https://download.mikrotik.com/routeros/$v/chr-$v.img.zip"
+ mkdir -p "$r"
+ [[ "$(df -Pk /dev/shm|awk 'NR==2{print $4}')" -gt 524288 ]] || die "/dev/shm needs 512MiB free."
+ info "Downloading official image: $url"
+ rm -f "$z" "$img"; curl -fL --retry 3 --connect-timeout 15 -o "$z" "$url"
+ unzip -t "$z" >/dev/null || die "ZIP integrity check failed."
+ unzip -jo "$z" "chr-$v.img" -d "$r" >/dev/null
+ [[ -s "$img" ]] || die "IMG extraction failed."
+ echo "SHA256: $(sha256sum "$img"|awk '{print $1}')"
+ echo; warn "FINAL WARNING: ALL DATA ON $TARGET WILL BE LOST."
+ read -rp "Type ERASE $TARGET exactly: " b
+ [[ "$b" == "ERASE $TARGET" ]] || { echo "Cancelled."; return; }
+ have swapoff && swapoff -a 2>/dev/null || true
+ sync; info "Writing CHR..."
+ dd if="$img" of="$TARGET" bs=4M conv=fsync status=progress
+ ok "CHR written successfully. Rebooting now."
+ sleep 3
+ [[ -w /proc/sysrq-trigger ]] && echo b >/proc/sysrq-trigger
+ reboot -f
 }
-
 while true; do
-banner
-echo "1) نصب RouterOS 7.24.2 Stable"
-echo "2) نصب RouterOS 7.23.5 Long-term"
-echo "3) نصب RouterOS 6.49.21 Long-term"
-echo "4) وارد کردن نسخه دلخواه CHR"
-echo "5) فقط بررسی Server / Disk / Network"
-echo "0) خروج"
-echo
-read -rp "انتخاب: " ch
-case "$ch" in
-  1) install "7.24.2";;
-  2) install "7.23.5";;
-  3) install "6.49.21";;
-  4) read -rp "نسخه، مثال 7.24.1 یا 6.49.21: " v
-     [[ "$v" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || { echo "نسخه نامعتبر"; sleep 1; continue; }
-     install "$v";;
-  5) check;;
-  0) exit 0;;
-  *) echo "انتخاب نامعتبر"; sleep 1;;
-esac
+ banner
+ echo "1) Install RouterOS 7.24.2"
+ echo "2) Install RouterOS 7.23.5"
+ echo "3) Install RouterOS 6.49.21"
+ echo "4) Install custom CHR version"
+ echo "5) READ-ONLY server/network/disk check"
+ echo "0) Exit"; echo
+ read -rp "Select: " c
+ case "$c" in
+ 1) install 7.24.2;; 2) install 7.23.5;; 3) install 6.49.21;;
+ 4) read -rp "Version: " v; [[ "$v" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] && install "$v" || { warn "Invalid version."; sleep 1; };;
+ 5) check;; 0) exit;; *) warn "Invalid selection."; sleep 1;;
+ esac
 done
