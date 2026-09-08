@@ -1,116 +1,177 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+
+# ============================================================
+#             MikroTik CHR Easy Installer v4
+#                      by Ramin TR
+# ============================================================
+# One-command automatic CHR installer for Ubuntu/Debian VPS.
+# WARNING: Installation permanently erases the selected system disk.
+
 C="\033[1;36m"; G="\033[1;32m"; Y="\033[1;33m"; R="\033[1;31m"; N="\033[0m"
-die(){ echo -e "${R}[ERROR]${N} $*" >&2; exit 1; }
-warn(){ echo -e "${Y}[WARN]${N} $*" >&2; }
 info(){ echo -e "${C}[INFO]${N} $*"; }
 ok(){ echo -e "${G}[OK]${N} $*"; }
+warn(){ echo -e "${Y}[WARN]${N} $*" >&2; }
+die(){ echo -e "${R}[ERROR]${N} $*" >&2; exit 1; }
 have(){ command -v "$1" >/dev/null 2>&1; }
+
 [[ $EUID -eq 0 ]] || die "Run as root."
 
-refresh(){
- ROOT_SRC="$(findmnt -n -o SOURCE / 2>/dev/null || true)"
- IPV4="$(ip -4 -o addr show scope global 2>/dev/null|awk 'NR==1{print $4}')"
- GW="$(ip -4 route show default 2>/dev/null|awk 'NR==1{print $3}')"
- NIC="$(ip -4 route show default 2>/dev/null|awk 'NR==1{print $5}')"
- MAC=""; [[ -n "$NIC" && -r /sys/class/net/$NIC/address ]] && MAC="$(cat /sys/class/net/$NIC/address)"
- ROOT_DISK=""
- local s="$ROOT_SRC" p="" i=0
- [[ "$s" == /dev/* ]] && s="$(readlink -f "$s" 2>/dev/null || echo "$s")"
- while [[ "$s" == /dev/* && $i -lt 8 ]]; do
-   [[ "$(lsblk -ndo TYPE "$s" 2>/dev/null|head -1)" == disk ]] && { ROOT_DISK="$s"; break; }
-   p="$(lsblk -ndo PKNAME "$s" 2>/dev/null|head -1 || true)"
-   [[ -z "$p" ]] && break
-   s="/dev/$p"; i=$((i+1))
- done
- mapfile -t DS < <(lsblk -dnpo NAME,TYPE|awk '$2=="disk"{print $1}')
- [[ -z "$ROOT_DISK" && ${#DS[@]} -eq 1 ]] && ROOT_DISK="${DS[0]}"
-}
-banner(){
- refresh; clear 2>/dev/null||true
- echo "============================================================"
- echo "           MikroTik CHR Easy Installer v3"
- echo "============================================================"
- echo "IPv4    : ${IPV4:-unknown}"
- echo "Gateway : ${GW:-unknown}"
- echo "NIC/MAC : ${NIC:-unknown} / ${MAC:-unknown}"
- echo "Root FS : ${ROOT_SRC:-unknown}"
- echo "Disk    : ${ROOT_DISK:-not detected}"
- echo "============================================================"; echo
-}
-check(){
- banner
- echo "READ-ONLY CHECK: no install, no package changes, no disk writes, no reboot."
- echo; lsblk -o NAME,PKNAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS,MODEL
- echo; ip -br -4 addr || true; echo; ip -4 route || true
- if have lspci; then echo; lspci -nn|grep -Ei 'ethernet|network|virtio|storage|sata|scsi|nvme'||true; fi
- echo; ok "Nothing was changed."; read -rp "Press Enter..." _
-}
-choose_disk(){
- mapfile -t D < <(lsblk -dnpo NAME,SIZE,TYPE|awk '$3=="disk"{print $1" "$2}')
- ((${#D[@]})) || die "No whole disks found."
- echo "Whole disks:"
- for i in "${!D[@]}"; do echo "  $((i+1))) ${D[$i]}"; done
- read -rp "Disk number (0=cancel): " n
- [[ "$n" =~ ^[0-9]+$ ]] && ((n>0 && n<=${#D[@]})) || return 1
- TARGET="$(awk '{print $1}' <<<"${D[$((n-1))]}")"
-}
-tools(){
- local m=(); have curl||m+=(curl); have unzip||m+=(unzip)
- if ((${#m[@]})); then
-   have apt-get||die "Missing ${m[*]}; apt-get unavailable."
-   info "Installing required download tools only now..."
-   apt-get update; DEBIAN_FRONTEND=noninteractive apt-get install -y "${m[@]}"
- fi
-}
-install(){
- local v="$1"; banner
- echo "Selected CHR: $v"; echo
- warn "Installation DESTROYS the selected disk."
- choose_disk || { echo "Cancelled."; sleep 1; return; }
- echo; echo "Target: $TARGET"
- echo "Current network: ${IPV4:-unknown}, gateway ${GW:-unknown}, ${NIC:-unknown}, MAC ${MAC:-unknown}"
- echo
- echo "Network note: Linux IP settings are not blindly copied to RouterOS."
- echo "DHCP/MAC-bound VPS networks normally reacquire their address."
- echo "Static-only providers may require console configuration after first boot."
- echo
- read -rp "Type INSTALL to continue: " a
- [[ "$a" == INSTALL ]] || { echo "Cancelled."; return; }
- tools
- local r=/dev/shm/chr-installer z="$r/chr-$v.img.zip" img="$r/chr-$v.img"
- local url="https://download.mikrotik.com/routeros/$v/chr-$v.img.zip"
- mkdir -p "$r"
- [[ "$(df -Pk /dev/shm|awk 'NR==2{print $4}')" -gt 524288 ]] || die "/dev/shm needs 512MiB free."
- info "Downloading official image: $url"
- rm -f "$z" "$img"; curl -fL --retry 3 --connect-timeout 15 -o "$z" "$url"
- unzip -t "$z" >/dev/null || die "ZIP integrity check failed."
- unzip -jo "$z" "chr-$v.img" -d "$r" >/dev/null
- [[ -s "$img" ]] || die "IMG extraction failed."
- echo "SHA256: $(sha256sum "$img"|awk '{print $1}')"
- echo; warn "FINAL WARNING: ALL DATA ON $TARGET WILL BE LOST."
- read -rp "Type ERASE $TARGET exactly: " b
- [[ "$b" == "ERASE $TARGET" ]] || { echo "Cancelled."; return; }
- have swapoff && swapoff -a 2>/dev/null || true
- sync; info "Writing CHR..."
- dd if="$img" of="$TARGET" bs=4M conv=fsync status=progress
- ok "CHR written successfully. Rebooting now."
- sleep 3
- [[ -w /proc/sysrq-trigger ]] && echo b >/proc/sysrq-trigger
- reboot -f
-}
-while true; do
- banner
- echo "1) Install RouterOS 7.24.2"
- echo "2) Install RouterOS 7.23.5"
- echo "3) Install RouterOS 6.49.21"
- echo "4) Install custom CHR version"
- echo "5) READ-ONLY server/network/disk check"
- echo "0) Exit"; echo
- read -rp "Select: " c
- case "$c" in
- 1) install 7.24.2;; 2) install 7.23.5;; 3) install 6.49.21;;
- 4) read -rp "Version: " v; [[ "$v" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] && install "$v" || { warn "Invalid version."; sleep 1; };;
- 5) check;; 0) exit;; *) warn "Invalid selection."; sleep 1;;
- esac
+clear 2>/dev/null || true
+cat <<'EOF'
+============================================================
+             MikroTik CHR Easy Installer v4
+                      by Ramin TR
+============================================================
+      Automatic detection, download and installation
+============================================================
+EOF
+
+# Read-only preflight.
+for c in lsblk findmnt awk grep df ip dd sha256sum sync; do
+  have "$c" || die "Required base command missing: $c"
 done
+
+ROOT_SRC="$(findmnt -n -o SOURCE / 2>/dev/null || true)"
+[[ "$ROOT_SRC" == /dev/* ]] && ROOT_SRC="$(readlink -f "$ROOT_SRC" 2>/dev/null || echo "$ROOT_SRC")"
+
+# Walk from root filesystem through partitions/LVM/DM to physical disk.
+TARGET=""
+cur="$ROOT_SRC"
+for _ in {1..10}; do
+  [[ "$cur" == /dev/* ]] || break
+  typ="$(lsblk -ndo TYPE "$cur" 2>/dev/null | head -1 || true)"
+  if [[ "$typ" == "disk" ]]; then TARGET="$cur"; break; fi
+  parent="$(lsblk -ndo PKNAME "$cur" 2>/dev/null | head -1 || true)"
+  [[ -n "$parent" ]] || break
+  cur="/dev/$parent"
+done
+
+mapfile -t DISKS < <(lsblk -dnpo NAME,TYPE | awk '$2=="disk"{print $1}')
+if [[ -z "$TARGET" && ${#DISKS[@]} -eq 1 ]]; then TARGET="${DISKS[0]}"; fi
+[[ -b "$TARGET" ]] || die "Could not safely identify the system disk. No changes made."
+
+IPV4="$(ip -4 -o addr show scope global 2>/dev/null | awk 'NR==1{print $4}' || true)"
+GW="$(ip -4 route show default 2>/dev/null | awk 'NR==1{print $3}' || true)"
+NIC="$(ip -4 route show default 2>/dev/null | awk 'NR==1{print $5}' || true)"
+MAC=""
+[[ -n "$NIC" && -r "/sys/class/net/$NIC/address" ]] && MAC="$(cat "/sys/class/net/$NIC/address")"
+
+# Best-effort DHCP/static detection without changing network.
+NETMODE="UNKNOWN"
+if ip -4 route show default 2>/dev/null | grep -qw dhcp; then
+  NETMODE="DHCP"
+elif ip -4 route show default 2>/dev/null | grep -qw static; then
+  NETMODE="STATIC"
+elif have networkctl && networkctl status "$NIC" 2>/dev/null | grep -qi "DHCP4.*yes"; then
+  NETMODE="DHCP"
+fi
+
+VIRT="Unknown"
+if have systemd-detect-virt; then
+  VIRT="$(systemd-detect-virt 2>/dev/null || true)"
+  [[ -z "$VIRT" || "$VIRT" == "none" ]] && VIRT="Bare-metal/Unknown"
+fi
+
+RAM_MB="$(awk '/MemTotal/{printf "%.0f",$2/1024}' /proc/meminfo)"
+CPU_COUNT="$(nproc 2>/dev/null || echo "?")"
+DISK_SIZE="$(lsblk -ndo SIZE "$TARGET" | head -1)"
+
+# Recommendation: modern ROS7 for CHR; WireGuard requires ROS7.
+# Stable is default; user can change DEFAULT_VERSION in GitHub when desired.
+DEFAULT_VERSION="7.24.2"
+RECOMMENDED="$DEFAULT_VERSION"
+
+echo
+echo "Detected automatically:"
+echo "  Virtualization : $VIRT"
+echo "  CPU            : $CPU_COUNT vCPU"
+echo "  RAM            : ${RAM_MB} MB"
+echo "  System disk    : $TARGET ($DISK_SIZE)"
+echo "  IPv4           : ${IPV4:-unknown}"
+echo "  Gateway        : ${GW:-unknown}"
+echo "  NIC / MAC      : ${NIC:-unknown} / ${MAC:-unknown}"
+echo "  Network mode   : $NETMODE"
+echo
+echo "Recommended CHR  : RouterOS $RECOMMENDED"
+echo
+
+if [[ "$NETMODE" == "STATIC" || "$NETMODE" == "UNKNOWN" ]]; then
+  warn "This VPS does not appear to use confirmed DHCP."
+  warn "CHR may require IP/Gateway configuration from provider console after boot."
+fi
+
+echo "The installer will:"
+echo "  1. Update Ubuntu package indexes/packages"
+echo "  2. Install only missing download/extract tools"
+echo "  3. Download official MikroTik CHR $RECOMMENDED"
+echo "  4. Extract the image into RAM"
+echo "  5. Erase $TARGET and install CHR"
+echo "  6. Reboot automatically"
+echo
+warn "ALL DATA ON $TARGET WILL BE PERMANENTLY ERASED."
+echo
+read -rp "Press ENTER to install, or type NO to cancel: " ANSWER
+[[ "${ANSWER^^}" != "NO" ]] || { echo "Cancelled."; exit 0; }
+
+# From here installation was explicitly approved.
+have apt-get || die "apt-get not available. This automatic mode supports Ubuntu/Debian."
+info "Updating Ubuntu..."
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get -y upgrade
+
+PKGS=()
+have curl || PKGS+=(curl)
+have unzip || PKGS+=(unzip)
+if ((${#PKGS[@]})); then
+  info "Installing required tools: ${PKGS[*]}"
+  apt-get install -y "${PKGS[@]}"
+fi
+
+RAMDIR="/dev/shm/chr-easy-installer"
+mkdir -p "$RAMDIR"
+ZIP="$RAMDIR/chr-${RECOMMENDED}.img.zip"
+IMG="$RAMDIR/chr-${RECOMMENDED}.img"
+URL="https://download.mikrotik.com/routeros/${RECOMMENDED}/chr-${RECOMMENDED}.img.zip"
+
+FREE_KB="$(df -Pk /dev/shm | awk 'NR==2{print $4}')"
+[[ "${FREE_KB:-0}" -gt 524288 ]] || die "/dev/shm needs at least 512 MiB free."
+
+info "Downloading official MikroTik CHR $RECOMMENDED..."
+rm -f "$ZIP" "$IMG"
+curl -fL --retry 3 --connect-timeout 15 -o "$ZIP" "$URL"
+
+info "Checking archive..."
+unzip -t "$ZIP" >/dev/null || die "Downloaded archive failed integrity test."
+
+info "Extracting CHR image to RAM..."
+unzip -jo "$ZIP" "chr-${RECOMMENDED}.img" -d "$RAMDIR" >/dev/null
+[[ -s "$IMG" ]] || die "CHR image extraction failed."
+
+HASH="$(sha256sum "$IMG" | awk '{print $1}')"
+ok "Image ready."
+echo "SHA256: $HASH"
+echo
+warn "LAST CONFIRMATION: $TARGET WILL NOW BE ERASED."
+read -rp "Type YES to continue: " FINAL
+[[ "${FINAL^^}" == "YES" ]] || { echo "Cancelled before disk write."; exit 0; }
+
+have swapoff && swapoff -a 2>/dev/null || true
+sync
+
+info "Installing MikroTik CHR $RECOMMENDED on $TARGET..."
+dd if="$IMG" of="$TARGET" bs=4M conv=fsync status=progress
+
+ok "CHR installation completed."
+echo "Previous Linux network for reference:"
+echo "  IPv4: ${IPV4:-unknown}"
+echo "  Gateway: ${GW:-unknown}"
+echo "  MAC: ${MAC:-unknown}"
+info "Rebooting into MikroTik CHR..."
+sleep 3
+
+if [[ -w /proc/sysrq-trigger ]]; then
+  echo b > /proc/sysrq-trigger
+fi
+reboot -f
