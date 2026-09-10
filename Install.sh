@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # ============================================================================
-#                 MikroTik No-Console Installer v16
+#                 MikroTik No-Console Installer v17
 #                          by Ramin TR
 # ============================================================================
 # Goal:
@@ -151,7 +151,7 @@ fi
 clear 2>/dev/null || true
 cat <<EOF
 ============================================================================
-                  MikroTik No-Console Installer v16
+                  MikroTik No-Console Installer v17
                            by Ramin TR
 ============================================================================
 Detected VPS
@@ -188,11 +188,17 @@ echo
 if [[ "$ENGINE" == "DIRECT" ]]; then
   echo -e "${G}RECOMMENDATION: DIRECT CHR is preferred for this VPS.${N}"
   echo "Reason: $ENGINE_REASON"
-  echo "FA: پیشنهاد این VPS: نصب مستقیم MikroTik/CHR"
+  echo
+  echo "پیشنهاد فارسی:"
+  echo "برای این سرور، نصب مستقیم میکروتیک پیشنهاد می‌شود."
 else
   echo -e "${Y}RECOMMENDATION: NO-CONSOLE VM is preferred for this VPS.${N}"
   echo "Reason: $ENGINE_REASON"
-  echo "FA: پیشنهاد این VPS: نصب با Docker/QEMU برای حفظ IP و Ping"
+  echo
+  echo "پیشنهاد فارسی:"
+  echo "برای این سرور، نصب مجازی پیشنهاد می‌شود."
+  echo "اوبونتو و آی‌پی عمومی حفظ می‌شوند."
+  echo "روش اجرا: Docker / QEMU"
 fi
 echo
 echo "  DIRECT CHR (REMOVE UBUNTU / MIKROTIK ON VPS DISK)"
