@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # ============================================================================
-#                 MikroTik No-Console Installer v13
+#                 MikroTik No-Console Installer v16
 #                          by Ramin TR
 # ============================================================================
 # Goal:
@@ -105,6 +105,17 @@ DISK_SIZE="$(lsblk -ndo SIZE "$TARGET" | head -1)"
 HAS_KVM="NO"
 [[ -c /dev/kvm && -r /dev/kvm && -w /dev/kvm ]] && HAS_KVM="YES"
 
+# Automatic low-memory profile for VM modes.
+if (( RAM_MB < 1100 )); then
+  CHR_RAM_MB=160
+elif (( RAM_MB < 1536 )); then
+  CHR_RAM_MB=192
+elif (( RAM_MB < 2560 )); then
+  CHR_RAM_MB=256
+else
+  CHR_RAM_MB=384
+fi
+
 # ------------------------- choose engine -------------------------------------
 # Direct mode is deliberately conservative. The previous successful pattern:
 # QEMU/KVM/VMware-like VM + one normal IPv4 + confirmed DHCP + no VLAN + no /32.
@@ -140,7 +151,7 @@ fi
 clear 2>/dev/null || true
 cat <<EOF
 ============================================================================
-                  MikroTik No-Console Installer v13
+                  MikroTik No-Console Installer v16
                            by Ramin TR
 ============================================================================
 Detected VPS
@@ -153,9 +164,12 @@ Gateway        : ${GW:-unknown}
 NIC / MAC      : ${NIC:-unknown} / ${MAC:-unknown}
 Network mode   : $NETMODE
 Nested KVM     : $HAS_KVM
+CHR VM RAM     : ${CHR_RAM_MB} MB
+Low-memory mode: $([[ "$RAM_MB" -lt 1100 ]] && echo YES || echo NO)
 ----------------------------------------------------------------------------
 AUTO ENGINE    : $ENGINE
 Reason         : $ENGINE_REASON
+Memory profile : automatic low-memory mode; VM images stay on Ubuntu disk
 ============================================================================
 EOF
 
@@ -174,9 +188,11 @@ echo
 if [[ "$ENGINE" == "DIRECT" ]]; then
   echo -e "${G}RECOMMENDATION: DIRECT CHR is preferred for this VPS.${N}"
   echo "Reason: $ENGINE_REASON"
+  echo "FA: پیشنهاد این VPS: نصب مستقیم MikroTik/CHR"
 else
   echo -e "${Y}RECOMMENDATION: NO-CONSOLE VM is preferred for this VPS.${N}"
   echo "Reason: $ENGINE_REASON"
+  echo "FA: پیشنهاد این VPS: نصب با Docker/QEMU برای حفظ IP و Ping"
 fi
 echo
 echo "  DIRECT CHR (REMOVE UBUNTU / MIKROTIK ON VPS DISK)"
@@ -241,19 +257,48 @@ info "Checking official MikroTik CHR image..."
 curl -fsIL --connect-timeout 10 --max-time 25 "$URL" >/dev/null \
   || die "Official CHR $VERSION image is unavailable. Nothing destructive was done."
 
-RAMDIR="/dev/shm/mikrotik-no-console"
-mkdir -p "$RAMDIR"
-ZIP="$RAMDIR/chr-$VERSION.img.zip"
-IMG="$RAMDIR/chr-$VERSION.img"
+# Storage strategy:
+# DIRECT keeps only the extracted IMG in RAM because the Linux disk will be overwritten.
+# VM modes keep the image on Ubuntu disk and do not require a large /dev/shm.
+if [[ "$ENGINE" == "DIRECT" ]]; then
+  ZIP="/var/tmp/chr-$VERSION.img.zip"
+  RAMDIR="/dev/shm/mikrotik-no-console"
+  mkdir -p "$RAMDIR"
+  IMG="$RAMDIR/chr-$VERSION.img"
 
-FREE_KB="$(df -Pk /dev/shm | awk 'NR==2{print $4}')"
-[[ "${FREE_KB:-0}" -gt 524288 ]] || die "/dev/shm needs at least 512 MiB free."
+  info "Downloading official CHR $VERSION..."
+  rm -f "$ZIP" "$IMG"
+  curl -fL --retry 3 --connect-timeout 15 -o "$ZIP" "$URL"
+  unzip -t "$ZIP" >/dev/null || die "CHR ZIP integrity test failed."
 
-info "Downloading official CHR $VERSION..."
-rm -f "$ZIP" "$IMG"
-curl -fL --retry 3 --connect-timeout 15 -o "$ZIP" "$URL"
-unzip -t "$ZIP" >/dev/null || die "CHR ZIP integrity test failed."
-unzip -jo "$ZIP" "chr-$VERSION.img" -d "$RAMDIR" >/dev/null
+  IMG_BYTES="$(unzip -l "$ZIP" "chr-$VERSION.img" | awk '/chr-.*\.img$/ {print $1; exit}')"
+  [[ "$IMG_BYTES" =~ ^[0-9]+$ ]] || die "Could not determine CHR image size."
+  FREE_BYTES="$(df -PB1 /dev/shm | awk 'NR==2{print $4}')"
+  HEADROOM=$((32*1024*1024))
+  REQUIRED_BYTES=$((IMG_BYTES + HEADROOM))
+
+  if (( FREE_BYTES < REQUIRED_BYTES )); then
+    die "/dev/shm too small for Direct CHR. Need about $((REQUIRED_BYTES/1024/1024)) MiB free; have $((FREE_BYTES/1024/1024)) MiB. Use No-Console VM mode."
+  fi
+
+  info "Extracting CHR image to RAM..."
+  unzip -jo "$ZIP" "chr-$VERSION.img" -d "$RAMDIR" >/dev/null
+  rm -f "$ZIP"
+else
+  WORKDIR="$BASE/download"
+  mkdir -p "$WORKDIR"
+  ZIP="$WORKDIR/chr-$VERSION.img.zip"
+  IMG="$WORKDIR/chr-$VERSION.img"
+
+  info "Downloading official CHR $VERSION..."
+  rm -f "$ZIP" "$IMG"
+  curl -fL --retry 3 --connect-timeout 15 -o "$ZIP" "$URL"
+  unzip -t "$ZIP" >/dev/null || die "CHR ZIP integrity test failed."
+  info "Extracting CHR image on Ubuntu disk..."
+  unzip -jo "$ZIP" "chr-$VERSION.img" -d "$WORKDIR" >/dev/null
+  rm -f "$ZIP"
+fi
+
 [[ -s "$IMG" ]] || die "CHR image extraction failed."
 HASH="$(sha256sum "$IMG" | awk '{print $1}')"
 ok "Image verified locally: $HASH"
@@ -438,7 +483,7 @@ docker_vm_install() {
     -p "127.0.0.1:${SERIAL_PORT}:${SERIAL_PORT}" \
     -v "$BASE/vm:/vm" \
     ramintr/chr-qemu:local \
-    $QEMU_ACCEL -m 256 -smp 1 \
+    $QEMU_ACCEL -m ${CHR_RAM_MB} -smp 1 \
     -drive file=/vm/chr.img,format=raw,if=virtio \
     -device virtio-net-pci,netdev=n0 \
     -netdev user,id=n0 \
@@ -473,7 +518,7 @@ docker_vm_install() {
     -p "${SSH_PORT}:22" \
     -v "$BASE/vm:/vm" \
     ramintr/chr-qemu:local \
-    $QEMU_RUN_ACCEL -m 256 -smp 1 \
+    $QEMU_RUN_ACCEL -m ${CHR_RAM_MB} -smp 1 \
     -drive file=/vm/chr.img,format=raw,if=virtio \
     -device virtio-net-pci,netdev=n0 \
     -netdev "user,id=n0,hostfwd=tcp::8291-:8291,hostfwd=tcp::22-:22" \
@@ -490,7 +535,7 @@ docker_vm_install() {
     "${RUNARGS[@]}" \
     -v "$BASE/vm:/vm" \
     ramintr/chr-qemu:local \
-    $QEMU_RUN_ACCEL -m 256 -smp 1 \
+    $QEMU_RUN_ACCEL -m ${CHR_RAM_MB} -smp 1 \
     -drive file=/vm/chr.img,format=raw,if=virtio \
     -device virtio-net-pci,netdev=n0 \
     -netdev "user,id=n0,hostfwd=tcp:0.0.0.0:${WINBOX_PORT}-:8291,hostfwd=tcp:0.0.0.0:${SSH_PORT}-:22" \
@@ -541,7 +586,7 @@ host_qemu_fallback() {
 
   # Provision in background.
   # shellcheck disable=SC2086
-  nohup qemu-system-x86_64 $ACCEL -m 256 -smp 1 \
+  nohup qemu-system-x86_64 $ACCEL -m ${CHR_RAM_MB} -smp 1 \
     -drive file="$BASE/vm/chr.img",format=raw,if=virtio \
     -device virtio-net-pci,netdev=n0 -netdev user,id=n0 \
     -nographic -serial "telnet:127.0.0.1:${SERIAL_PORT},server,nowait" \
@@ -564,7 +609,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/qemu-system-x86_64 $ACCEL -m 256 -smp 1 -drive file=$BASE/vm/chr.img,format=raw,if=virtio -device virtio-net-pci,netdev=n0 -netdev user,id=n0,hostfwd=tcp:0.0.0.0:${WINBOX_PORT}-:8291,hostfwd=tcp:0.0.0.0:${SSH_PORT}-:22 -nographic -serial none -monitor none
+ExecStart=/usr/bin/qemu-system-x86_64 $ACCEL -m ${CHR_RAM_MB} -smp 1 -drive file=$BASE/vm/chr.img,format=raw,if=virtio -device virtio-net-pci,netdev=n0 -netdev user,id=n0,hostfwd=tcp:0.0.0.0:${WINBOX_PORT}-:8291,hostfwd=tcp:0.0.0.0:${SSH_PORT}-:22 -nographic -serial none -monitor none
 Restart=always
 RestartSec=3
 
