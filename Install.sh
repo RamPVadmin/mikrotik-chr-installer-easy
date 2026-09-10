@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # ============================================================================
-#                 MikroTik No-Console Installer v19
+#                 MikroTik No-Console Installer v20
 #                          by Ramin TR
 # ============================================================================
 # Goal:
@@ -151,7 +151,7 @@ fi
 clear 2>/dev/null || true
 cat <<EOF
 ============================================================================
-                  MikroTik No-Console Installer v19
+                  MikroTik No-Console Installer v20
                            by Ramin TR
 ============================================================================
 Detected VPS
@@ -388,31 +388,42 @@ provision_serial() {
 
   cat > "$exp" <<'EOF'
 #!/usr/bin/expect -f
-set timeout 120
+
+set timeout 150
 set port [lindex $argv 0]
 set pass [lindex $argv 1]
 
+log_user 1
 spawn telnet 127.0.0.1 $port
 
 set logged 0
 while {$logged == 0} {
   expect {
-    -re "(?i)login:" {
-      send "admin\r"
+    -re {(?i)login:} {
+      send -- "admin\r"
+      exp_continue
     }
-    -re "(?i)password:" {
-      send "\r"
+    -re {(?i)password:} {
+      send -- "\r"
+      exp_continue
     }
-    -re "(?i)software license.*\\[Y/n\\]" {
-      send "n\r"
+    -re {(?i)do you want to see the software license.*\[Y/n\]} {
+      send -- "n\r"
+      exp_continue
     }
-    -re "(?i)new password" {
-      send "$pass\r"
+    -re {(?i)software license.*\[Y/n\]} {
+      send -- "n\r"
+      exp_continue
     }
-    -re "(?i)repeat.*password" {
-      send "$pass\r"
+    -re {(?i)new password} {
+      send -- "$pass\r"
+      exp_continue
     }
-    -re "\\] >" {
+    -re {(?i)repeat.*password} {
+      send -- "$pass\r"
+      exp_continue
+    }
+    -re {\] >} {
       set logged 1
     }
     timeout {
@@ -426,28 +437,61 @@ while {$logged == 0} {
   }
 }
 
-# Configure a predictable DHCP WAN inside QEMU user-mode NAT.
-send "/system identity set name=CHR-NoConsole\r"
-expect -re "\\] >"
-send "/ip dhcp-client remove \\[find interface=ether1\\]\r"
-expect -re "\\] >"
-send "/ip dhcp-client add interface=ether1 disabled=no add-default-route=yes use-peer-dns=yes\r"
-expect -re "\\] >"
-send "/ip service enable winbox\r"
-expect -re "\\] >"
-send "/ip service enable ssh\r"
-expect -re "\\] >"
-send "/user set \\[find name=admin\\] password=$pass\r"
-expect -re "\\] >"
-send "/ip dhcp-client print detail\r"
-expect -re "\\] >"
-send "/system shutdown\r"
+proc wait_prompt {} {
+  expect {
+    -re {\] >} { return 0 }
+    timeout {
+      puts "ROUTEROS_PROMPT_TIMEOUT"
+      exit 30
+    }
+    eof {
+      puts "ROUTEROS_EOF"
+      exit 31
+    }
+  }
+}
+
+# Configure CHR behind QEMU user-mode NAT.
+send -- {/system identity set name=CHR-NoConsole}
+send -- "\r"
+wait_prompt
+
+send -- {/ip dhcp-client remove [find interface=ether1]}
+send -- "\r"
+wait_prompt
+
+send -- {/ip dhcp-client add interface=ether1 disabled=no add-default-route=yes use-peer-dns=yes}
+send -- "\r"
+wait_prompt
+
+send -- {/ip service enable winbox}
+send -- "\r"
+wait_prompt
+
+send -- {/ip service enable ssh}
+send -- "\r"
+wait_prompt
+
+# Use two sends so Tcl never interprets RouterOS [find ...] as Tcl command substitution.
+send -- {/user set [find name=admin] password=}
+send -- "$pass\r"
+wait_prompt
+
+send -- {/ip dhcp-client print detail}
+send -- "\r"
+wait_prompt
+
+send -- {/system shutdown}
+send -- "\r"
+
 expect {
-  -re "(?i)shutdown" {}
+  -re {(?i)shutdown} {}
+  -re {(?i)system.*halt} {}
   timeout {}
   eof {}
 }
 EOF
+
   chmod +x "$exp"
   "$exp" "$serial_port" "$admin_pass"
 }
