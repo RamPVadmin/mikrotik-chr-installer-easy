@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # ============================================================================
-#                 MikroTik No-Console Installer v21
+#                 MikroTik No-Console Installer v22
 #                          by Ramin TR
 # ============================================================================
 # Goal:
@@ -151,7 +151,7 @@ fi
 clear 2>/dev/null || true
 cat <<EOF
 ============================================================================
-                  MikroTik No-Console Installer v21
+                  MikroTik No-Console Installer v22
                            by Ramin TR
 ============================================================================
 Detected VPS
@@ -260,8 +260,52 @@ fi
 
 # Verify selected official image before any destructive action.
 info "Checking official MikroTik CHR image..."
-curl -fsIL --connect-timeout 10 --max-time 25 "$URL" >/dev/null \
-  || die "Official CHR $VERSION image is unavailable. Nothing destructive was done."
+curl -fsIL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 10 --max-time 60 "$URL" >/dev/null \
+  || die "Could not verify the official CHR $VERSION image after multiple retries. Nothing destructive was done."
+
+# Robust resumable downloader for unstable international links.
+# A reset/timeout resumes from the existing partial file instead of starting over.
+download_with_resume() {
+  local url="$1"
+  local output="$2"
+  local attempt
+
+  touch "$output"
+
+  for attempt in 1 2 3 4 5 6; do
+    info "Download attempt $attempt/6 (resume enabled)..."
+
+    if curl -fL \
+      --retry 5 \
+      --retry-all-errors \
+      --retry-delay 2 \
+      --connect-timeout 15 \
+      --speed-time 45 \
+      --speed-limit 1024 \
+      -C - \
+      -o "$output" \
+      "$url"; then
+      return 0
+    fi
+
+    warn "Download connection interrupted. Retrying from the downloaded position..."
+    sleep $((attempt * 2))
+  done
+
+  # Some HTTP endpoints/proxies may reject Range requests. Try one clean download.
+  warn "Resume retries failed; trying one clean download..."
+  rm -f "$output"
+
+  curl -fL \
+    --retry 8 \
+    --retry-all-errors \
+    --retry-delay 3 \
+    --connect-timeout 15 \
+    --speed-time 45 \
+    --speed-limit 1024 \
+    -o "$output" \
+    "$url"
+}
 
 # Storage strategy:
 # DIRECT keeps only the extracted IMG in RAM because the Linux disk will be overwritten.
@@ -273,9 +317,9 @@ if [[ "$ENGINE" == "DIRECT" ]]; then
   IMG="$RAMDIR/chr-$VERSION.img"
 
   info "Downloading official CHR $VERSION..."
-  rm -f "$ZIP" "$IMG"
-  curl -fL --retry 3 --connect-timeout 15 -o "$ZIP" "$URL"
-  unzip -t "$ZIP" >/dev/null || die "CHR ZIP integrity test failed."
+  rm -f "$IMG"
+  download_with_resume "$URL" "$ZIP" || die "CHR download failed after all retry/resume attempts."
+  unzip -t "$ZIP" >/dev/null || die "CHR ZIP integrity test failed after download."
 
   IMG_BYTES="$(unzip -l "$ZIP" "chr-$VERSION.img" | awk '/chr-.*\.img$/ {print $1; exit}')"
   [[ "$IMG_BYTES" =~ ^[0-9]+$ ]] || die "Could not determine CHR image size."
@@ -297,9 +341,9 @@ else
   IMG="$WORKDIR/chr-$VERSION.img"
 
   info "Downloading official CHR $VERSION..."
-  rm -f "$ZIP" "$IMG"
-  curl -fL --retry 3 --connect-timeout 15 -o "$ZIP" "$URL"
-  unzip -t "$ZIP" >/dev/null || die "CHR ZIP integrity test failed."
+  rm -f "$IMG"
+  download_with_resume "$URL" "$ZIP" || die "CHR download failed after all retry/resume attempts."
+  unzip -t "$ZIP" >/dev/null || die "CHR ZIP integrity test failed after download."
   info "Extracting CHR image on Ubuntu disk..."
   unzip -jo "$ZIP" "chr-$VERSION.img" -d "$WORKDIR" >/dev/null
   rm -f "$ZIP"
