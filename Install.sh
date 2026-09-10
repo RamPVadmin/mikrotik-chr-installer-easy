@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # ============================================================================
-#                 MikroTik No-Console Installer v17
+#                 MikroTik No-Console Installer v19
 #                          by Ramin TR
 # ============================================================================
 # Goal:
@@ -151,7 +151,7 @@ fi
 clear 2>/dev/null || true
 cat <<EOF
 ============================================================================
-                  MikroTik No-Console Installer v17
+                  MikroTik No-Console Installer v19
                            by Ramin TR
 ============================================================================
 Detected VPS
@@ -185,33 +185,33 @@ echo
 
 echo "Choose installation:"
 echo
+
 if [[ "$ENGINE" == "DIRECT" ]]; then
   echo -e "${G}RECOMMENDATION: DIRECT CHR is preferred for this VPS.${N}"
   echo "Reason: $ENGINE_REASON"
-  echo
-  echo "پیشنهاد فارسی:"
-  echo "برای این سرور، نصب مستقیم میکروتیک پیشنهاد می‌شود."
+  DIRECT_COLOR="$G"
+  VM_COLOR="$R"
 else
-  echo -e "${Y}RECOMMENDATION: NO-CONSOLE VM is preferred for this VPS.${N}"
+  echo -e "${G}RECOMMENDATION: NO-CONSOLE VM is preferred for this VPS.${N}"
   echo "Reason: $ENGINE_REASON"
-  echo
-  echo "پیشنهاد فارسی:"
-  echo "برای این سرور، نصب مجازی پیشنهاد می‌شود."
-  echo "اوبونتو و آی‌پی عمومی حفظ می‌شوند."
-  echo "روش اجرا: Docker / QEMU"
+  DIRECT_COLOR="$R"
+  VM_COLOR="$G"
 fi
+
 echo
-echo "  DIRECT CHR (REMOVE UBUNTU / MIKROTIK ON VPS DISK)"
-echo "  1) RouterOS $ROS7_STABLE   [ROS7 STABLE]    -> DIRECT INSTALL"
-echo "  2) RouterOS $ROS7_LONG    [ROS7 LONG-TERM] -> DIRECT INSTALL"
-echo "  3) RouterOS $ROS6_STABLE   [ROS6 STABLE]    -> DIRECT INSTALL"
-echo "  4) RouterOS $ROS6_LONG   [ROS6 LONG-TERM] -> DIRECT INSTALL"
+echo -e "${DIRECT_COLOR}  DIRECT CHR (REMOVE UBUNTU / MIKROTIK ON VPS DISK)${N}"
+echo -e "${DIRECT_COLOR}  1) RouterOS $ROS7_STABLE   [ROS7 STABLE]    -> DIRECT INSTALL${N}"
+echo -e "${DIRECT_COLOR}  2) RouterOS $ROS7_LONG    [ROS7 LONG-TERM] -> DIRECT INSTALL${N}"
+echo -e "${DIRECT_COLOR}  3) RouterOS $ROS6_STABLE   [ROS6 STABLE]    -> DIRECT INSTALL${N}"
+echo -e "${DIRECT_COLOR}  4) RouterOS $ROS6_LONG   [ROS6 LONG-TERM] -> DIRECT INSTALL${N}"
+
 echo
-echo "  NO-CONSOLE VM (KEEP UBUNTU + KEEP PUBLIC IP)"
-echo "  5) RouterOS $ROS7_STABLE   [ROS7 STABLE]    -> DOCKER/QEMU VM"
-echo "  6) RouterOS $ROS7_LONG    [ROS7 LONG-TERM] -> DOCKER/QEMU VM"
-echo "  7) RouterOS $ROS6_STABLE   [ROS6 STABLE]    -> DOCKER/QEMU VM"
-echo "  8) RouterOS $ROS6_LONG   [ROS6 LONG-TERM] -> DOCKER/QEMU VM"
+echo -e "${VM_COLOR}  NO-CONSOLE VM (KEEP UBUNTU + KEEP PUBLIC IP)${N}"
+echo -e "${VM_COLOR}  5) RouterOS $ROS7_STABLE   [ROS7 STABLE]    -> DOCKER/QEMU VM${N}"
+echo -e "${VM_COLOR}  6) RouterOS $ROS7_LONG    [ROS7 LONG-TERM] -> DOCKER/QEMU VM${N}"
+echo -e "${VM_COLOR}  7) RouterOS $ROS6_STABLE   [ROS6 STABLE]    -> DOCKER/QEMU VM${N}"
+echo -e "${VM_COLOR}  8) RouterOS $ROS6_LONG   [ROS6 LONG-TERM] -> DOCKER/QEMU VM${N}"
+
 echo
 echo "  0) Cancel"
 echo
