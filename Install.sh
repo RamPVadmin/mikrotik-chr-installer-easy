@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # ============================================================================
-#                 MikroTik No-Console Installer v20
+#                 MikroTik No-Console Installer v21
 #                          by Ramin TR
 # ============================================================================
 # Goal:
@@ -151,7 +151,7 @@ fi
 clear 2>/dev/null || true
 cat <<EOF
 ============================================================================
-                  MikroTik No-Console Installer v20
+                  MikroTik No-Console Installer v21
                            by Ramin TR
 ============================================================================
 Detected VPS
@@ -389,57 +389,92 @@ provision_serial() {
   cat > "$exp" <<'EOF'
 #!/usr/bin/expect -f
 
-set timeout 150
+set timeout 180
 set port [lindex $argv 0]
 set pass [lindex $argv 1]
 
 log_user 1
 spawn telnet 127.0.0.1 $port
 
-set logged 0
-while {$logged == 0} {
+# Wake the RouterOS serial console.
+after 1000
+send -- "\r"
+
+# Login state machine for fresh CHR v6/v7.
+set tries 0
+set cli 0
+
+while {$cli == 0 && $tries < 5} {
   expect {
-    -re {(?i)login:} {
+    -re {(?i)(CHR|MikroTik)[[:space:]]+Login:} {
       send -- "admin\r"
+      incr tries
       exp_continue
     }
-    -re {(?i)password:} {
+
+    -re {(?i)^Login:} {
+      send -- "admin\r"
+      incr tries
+      exp_continue
+    }
+
+    -re {(?i)Password:} {
+      # Fresh CHR password is empty.
       send -- "\r"
       exp_continue
     }
-    -re {(?i)do you want to see the software license.*\[Y/n\]} {
+
+    -re {(?i)Do you want to see the software license.*} {
       send -- "n\r"
       exp_continue
     }
-    -re {(?i)software license.*\[Y/n\]} {
+
+    -re {(?i)software license.*} {
       send -- "n\r"
       exp_continue
     }
-    -re {(?i)new password} {
+
+    -re {(?i)New Password:} {
+      # Some RouterOS builds force a password at first login.
       send -- "$pass\r"
       exp_continue
     }
-    -re {(?i)repeat.*password} {
+
+    -re {(?i)Repeat New Password:} {
       send -- "$pass\r"
       exp_continue
     }
-    -re {\] >} {
-      set logged 1
+
+    -re {\[[^]\r\n]+@[^]\r\n]+\][ ]*>} {
+      set cli 1
     }
+
+    -re {\][ ]*>} {
+      set cli 1
+    }
+
     timeout {
-      puts "SERIAL_LOGIN_TIMEOUT"
-      exit 20
+      # A blank line safely redraws the login/prompt.
+      send -- "\r"
+      incr tries
     }
+
     eof {
-      puts "SERIAL_EOF"
+      puts "SERIAL_EOF_DURING_LOGIN"
       exit 21
     }
   }
 }
 
+if {$cli == 0} {
+  puts "SERIAL_LOGIN_FAILED_AFTER_RETRIES"
+  exit 22
+}
+
 proc wait_prompt {} {
   expect {
-    -re {\] >} { return 0 }
+    -re {\[[^]\r\n]+@[^]\r\n]+\][ ]*>} { return 0 }
+    -re {\][ ]*>} { return 0 }
     timeout {
       puts "ROUTEROS_PROMPT_TIMEOUT"
       exit 30
@@ -456,6 +491,7 @@ send -- {/system identity set name=CHR-NoConsole}
 send -- "\r"
 wait_prompt
 
+# Ensure a single DHCP client exists on ether1.
 send -- {/ip dhcp-client remove [find interface=ether1]}
 send -- "\r"
 wait_prompt
@@ -472,21 +508,28 @@ send -- {/ip service enable ssh}
 send -- "\r"
 wait_prompt
 
-# Use two sends so Tcl never interprets RouterOS [find ...] as Tcl command substitution.
+# Set generated admin password. RouterOS [find ...] stays inside Tcl braces.
 send -- {/user set [find name=admin] password=}
 send -- "$pass\r"
 wait_prompt
 
+# Verify that DHCP reached bound state or at least that the client exists.
 send -- {/ip dhcp-client print detail}
 send -- "\r"
 wait_prompt
 
+send -- {/system identity print}
+send -- "\r"
+wait_prompt
+
+# Persist configuration by clean shutdown.
 send -- {/system shutdown}
 send -- "\r"
 
 expect {
+  -re {(?i)system.*shutdown} {}
   -re {(?i)shutdown} {}
-  -re {(?i)system.*halt} {}
+  -re {(?i)halt} {}
   timeout {}
   eof {}
 }
